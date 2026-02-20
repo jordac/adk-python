@@ -99,7 +99,7 @@ COPY --chown=myuser:myuser "agents/{app_name}/" "/app/agents/{app_name}/"
 
 EXPOSE {port}
 
-CMD adk {command} --port={port} {host_option} {service_option} {trace_to_cloud_option} {otel_to_cloud_option} {allow_origins_option} {a2a_option} "/app/agents"
+CMD {cmd_exec}
 """
 
 _AGENT_ENGINE_APP_TEMPLATE: Final[str] = """
@@ -591,8 +591,8 @@ def _get_service_option_by_adk_version(
     artifact_uri: Optional[str],
     memory_uri: Optional[str],
     use_local_storage: Optional[bool] = None,
-) -> str:
-  """Returns service option string based on adk_version."""
+) -> list[str]:
+  """Returns service options based on adk_version."""
   parsed_version = parse(adk_version)
   options: list[str] = []
 
@@ -621,7 +621,7 @@ def _get_service_option_by_adk_version(
           else '--no_use_local_storage'
       ))
 
-  return ' '.join(options)
+  return options
 
 
 def to_cloud_run(
@@ -645,6 +645,7 @@ def to_cloud_run(
     memory_service_uri: Optional[str] = None,
     use_local_storage: bool = False,
     a2a: bool = False,
+    trigger_sources: Optional[str] = None,
     extra_gcloud_args: Optional[tuple[str, ...]] = None,
 ):
   """Deploys an agent to Google Cloud Run.
@@ -710,31 +711,45 @@ def to_cloud_run(
 
     # create Dockerfile
     click.echo('Creating Dockerfile...')
-    host_option = '--host=0.0.0.0' if adk_version > '0.5.0' else ''
-    allow_origins_option = (
-        f'--allow_origins={",".join(allow_origins)}' if allow_origins else ''
-    )
-    a2a_option = '--a2a' if a2a else ''
-    dockerfile_content = _DOCKERFILE_TEMPLATE.format(
-        gcp_project_id=project,
-        gcp_region=region,
-        app_name=app_name,
-        port=port,
-        command='web' if with_ui else 'api_server',
-        install_agent_deps=install_agent_deps,
-        service_option=_get_service_option_by_adk_version(
+    cmd_args = [
+        'adk',
+        'web' if with_ui else 'api_server',
+        f'--port={port}',
+    ]
+    if adk_version > '0.5.0':
+      cmd_args.append('--host=0.0.0.0')
+
+    cmd_args.extend(
+        _get_service_option_by_adk_version(
             adk_version,
             session_service_uri,
             artifact_service_uri,
             memory_service_uri,
             use_local_storage,
-        ),
-        trace_to_cloud_option='--trace_to_cloud' if trace_to_cloud else '',
-        otel_to_cloud_option='--otel_to_cloud' if otel_to_cloud else '',
-        allow_origins_option=allow_origins_option,
+        )
+    )
+
+    if trace_to_cloud:
+      cmd_args.append('--trace_to_cloud')
+    if otel_to_cloud:
+      cmd_args.append('--otel_to_cloud')
+    if allow_origins:
+      cmd_args.append(f'--allow_origins={",".join(allow_origins)}')
+    if a2a:
+      cmd_args.append('--a2a')
+    if trigger_sources:
+      cmd_args.append(f'--trigger_sources={trigger_sources}')
+
+    cmd_args.append('/app/agents')
+
+    dockerfile_content = _DOCKERFILE_TEMPLATE.format(
+        gcp_project_id=project,
+        gcp_region=region,
+        app_name=app_name,
+        port=port,
+        install_agent_deps=install_agent_deps,
         adk_version=adk_version,
-        host_option=host_option,
-        a2a_option=a2a_option,
+        cmd_exec=json.dumps(cmd_args),
     )
     dockerfile_path = os.path.join(temp_folder, 'Dockerfile')
     os.makedirs(temp_folder, exist_ok=True)
@@ -1171,6 +1186,7 @@ def to_gke(
     memory_service_uri: Optional[str] = None,
     use_local_storage: bool = False,
     a2a: bool = False,
+    trigger_sources: Optional[str] = None,
     service_type: Literal[
         'ClusterIP', 'NodePort', 'LoadBalancer'
     ] = 'ClusterIP',
@@ -1247,27 +1263,45 @@ def to_gke(
     # create Dockerfile
     click.secho('\nSTEP 2: Generating deployment files...', bold=True)
     click.echo('  - Creating Dockerfile...')
-    host_option = '--host=0.0.0.0' if adk_version > '0.5.0' else ''
-    dockerfile_content = _DOCKERFILE_TEMPLATE.format(
-        gcp_project_id=project,
-        gcp_region=region,
-        app_name=app_name,
-        port=port,
-        command='web' if with_ui else 'api_server',
-        install_agent_deps=install_agent_deps,
-        service_option=_get_service_option_by_adk_version(
+    cmd_args = [
+        'adk',
+        'web' if with_ui else 'api_server',
+        f'--port={port}',
+    ]
+    if adk_version > '0.5.0':
+      cmd_args.append('--host=0.0.0.0')
+
+    cmd_args.extend(
+        _get_service_option_by_adk_version(
             adk_version,
             session_service_uri,
             artifact_service_uri,
             memory_service_uri,
             use_local_storage,
-        ),
-        trace_to_cloud_option='--trace_to_cloud' if trace_to_cloud else '',
-        otel_to_cloud_option='--otel_to_cloud' if otel_to_cloud else '',
-        allow_origins_option=allow_origins_option,
+        )
+    )
+
+    if trace_to_cloud:
+      cmd_args.append('--trace_to_cloud')
+    if otel_to_cloud:
+      cmd_args.append('--otel_to_cloud')
+    if allow_origins:
+      cmd_args.append(f'--allow_origins={",".join(allow_origins)}')
+    if a2a:
+      cmd_args.append('--a2a')
+    if trigger_sources:
+      cmd_args.append(f'--trigger_sources={trigger_sources}')
+
+    cmd_args.append('/app/agents')
+
+    dockerfile_content = _DOCKERFILE_TEMPLATE.format(
+        gcp_project_id=project,
+        gcp_region=region,
+        app_name=app_name,
+        port=port,
+        install_agent_deps=install_agent_deps,
         adk_version=adk_version,
-        host_option=host_option,
-        a2a_option='--a2a' if a2a else '',
+        cmd_exec=json.dumps(cmd_args),
     )
     dockerfile_path = os.path.join(temp_folder, 'Dockerfile')
     os.makedirs(temp_folder, exist_ok=True)
